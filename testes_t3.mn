@@ -1,10 +1,14 @@
 sh echo "=============================================================="
-sh echo " TRABALHO 3 - FLUXO ELEFANTE EM P4 - ROTEIRO DE TESTES"
-sh echo " Uso no CLI do Mininet:  source testes_t3.mn"
-sh echo " Duração total: cerca de 4 minutos (7 execuções de 25 s)"
+sh echo " TRABALHO 3 - FLUXO ELEFANTE EM P4 - ROTEIRO EM ESCALA REDUZIDA"
+sh echo " Gargalo S1-H3 = 1 Mbps (topology.json); limiar = 5000 bytes por 100 ms (0,4 Mbps)"
+sh echo " H1 normal = 0,15 Mbps | H2 elefante = 1,6 Mbps (de 5 s a 15 s)"
+sh echo " Uso no CLI do Mininet:  source testes_t3_escala.mn   (cerca de 4 minutos)"
 sh echo "=============================================================="
 sh echo ""
-sh echo "### PASSO 0 - AMBIENTE: servidor em H3 e teste de fumaça ###"
+sh echo "### PASSO 0 - AMBIENTE: fila do enlace, servidor em H3 e teste de fumaça ###"
+sh tc qdisc change dev s1-eth3 parent 5:1 handle 10: netem limit 30 delay 1ms
+sh tc class show dev s1-eth3
+sh tc qdisc show dev s1-eth3
 h3 pkill -f anomalia_server.py
 h3 python3 anomalia_server.py > /tmp/anom_server.txt 2>&1 &
 h3 sleep 2
@@ -14,61 +18,62 @@ h1 sleep 3
 sh rm -f anom_obs/sent_run99_h1.json anom_obs/server_run99.json
 sh echo ""
 sh echo "### PASSO 1 - CENÁRIO NORMAL (sem anomalia) ###"
-sh echo "H1 e H2 a 2 Mbps cada. Detector e descarte total LIGADOS: não pode haver alarme nem descarte."
+sh echo "H1 e H2 a 0,15 Mbps. Detector e descarte total LIGADOS: não pode haver alarme nem descarte."
 sh echo "--- RUN 1: UDP | normal | descarte total ligado ---"
-sh python3 anomalia_ctl.py prepare --mode total
-h1 python3 anomalia_client.py h1 --run 1 --label udp-normal --proto udp --phase 0:20:2 --probe --duration 20 > /tmp/anom_r1_h1.txt 2>&1 &
-h2 python3 anomalia_client.py h2 --run 1 --label udp-normal --proto udp --phase 5:10:2 --phase 15:5:2 > /tmp/anom_r1_h2.txt 2>&1
+sh python3 anomalia_ctl.py prepare --mode total --thresh 5000
+h1 python3 anomalia_client.py h1 --run 1 --label udp-normal --proto udp --phase 0:20:0.15 --probe --duration 20 > /tmp/anom_r1_h1.txt 2>&1 &
+h2 python3 anomalia_client.py h2 --run 1 --label udp-normal --proto udp --phase 5:10:0.15 --phase 15:5:0.15 > /tmp/anom_r1_h2.txt 2>&1
 h1 sleep 5
 sh python3 anomalia_ctl.py stats --run 1
 sh echo ""
-sh echo "### PASSO 2 - ANOMALIA UDP: H2 sobe para 15 Mbps de 5 s a 15 s (gargalo 10 Mbps) ###"
+sh echo "### PASSO 2 - ANOMALIA UDP: H2 sobe para 1,6 Mbps de 5 s a 15 s (gargalo 1 Mbps) ###"
 sh echo "--- RUN 2: UDP | anomalia | SEM mitigação (detecta mas não descarta) ---"
-sh python3 anomalia_ctl.py prepare --mode off
-h1 python3 anomalia_client.py h1 --run 2 --label udp-sem-mitigacao --proto udp --phase 0:20:2 --probe --duration 20 > /tmp/anom_r2_h1.txt 2>&1 &
-h2 python3 anomalia_client.py h2 --run 2 --label udp-sem-mitigacao --proto udp --phase 5:10:15 --phase 15:5:2 > /tmp/anom_r2_h2.txt 2>&1
+sh python3 anomalia_ctl.py prepare --mode off --thresh 5000
+h1 python3 anomalia_client.py h1 --run 2 --label udp-sem-mitigacao --proto udp --phase 0:20:0.15 --probe --duration 20 > /tmp/anom_r2_h1.txt 2>&1 &
+h2 python3 anomalia_client.py h2 --run 2 --label udp-sem-mitigacao --proto udp --phase 5:10:1.6 --phase 15:5:0.15 > /tmp/anom_r2_h2.txt 2>&1
 h1 sleep 5
 sh python3 anomalia_ctl.py stats --run 2
 sh echo ""
 sh echo "### PASSO 3A - TRATAMENTO: ESTRATÉGIA A (descarte total) ###"
 sh echo "--- RUN 3: UDP | anomalia | descarte total ---"
-sh python3 anomalia_ctl.py prepare --mode total
-h1 python3 anomalia_client.py h1 --run 3 --label udp-descarte-total --proto udp --phase 0:20:2 --probe --duration 20 > /tmp/anom_r3_h1.txt 2>&1 &
-h2 python3 anomalia_client.py h2 --run 3 --label udp-descarte-total --proto udp --phase 5:10:15 --phase 15:5:2 > /tmp/anom_r3_h2.txt 2>&1
+sh python3 anomalia_ctl.py prepare --mode total --thresh 5000
+h1 python3 anomalia_client.py h1 --run 3 --label udp-descarte-total --proto udp --phase 0:20:0.15 --probe --duration 20 > /tmp/anom_r3_h1.txt 2>&1 &
+h2 python3 anomalia_client.py h2 --run 3 --label udp-descarte-total --proto udp --phase 5:10:1.6 --phase 15:5:0.15 > /tmp/anom_r3_h2.txt 2>&1
 h1 sleep 5
 sh python3 anomalia_ctl.py stats --run 3
 sh echo ""
 sh echo "### PASSO 3B - TRATAMENTO: ESTRATÉGIA B (descarte probabilístico) ###"
 sh echo "--- RUN 4: UDP | anomalia | descarte probabilístico ---"
-sh python3 anomalia_ctl.py prepare --mode prob
-h1 python3 anomalia_client.py h1 --run 4 --label udp-descarte-prob --proto udp --phase 0:20:2 --probe --duration 20 > /tmp/anom_r4_h1.txt 2>&1 &
-h2 python3 anomalia_client.py h2 --run 4 --label udp-descarte-prob --proto udp --phase 5:10:15 --phase 15:5:2 > /tmp/anom_r4_h2.txt 2>&1
+sh python3 anomalia_ctl.py prepare --mode prob --thresh 5000
+h1 python3 anomalia_client.py h1 --run 4 --label udp-descarte-prob --proto udp --phase 0:20:0.15 --probe --duration 20 > /tmp/anom_r4_h1.txt 2>&1 &
+h2 python3 anomalia_client.py h2 --run 4 --label udp-descarte-prob --proto udp --phase 5:10:1.6 --phase 15:5:0.15 > /tmp/anom_r4_h2.txt 2>&1
 h1 sleep 5
 sh python3 anomalia_ctl.py stats --run 4
 sh echo ""
-sh echo "### PASSO 4 - REPETIÇÃO COM ELEFANTE TCP (H2 envia o mais rápido possível; H1 segue UDP a 2 Mbps) ###"
+sh echo "### PASSO 4 - REPETIÇÃO COM ELEFANTE TCP (H2 envia o mais rápido possível; H1 segue UDP a 0,15 Mbps) ###"
 sh echo "--- RUN 5: TCP | anomalia | SEM mitigação ---"
-sh python3 anomalia_ctl.py prepare --mode off
-h1 python3 anomalia_client.py h1 --run 5 --label tcp-sem-mitigacao --proto udp --phase 0:20:2 --probe --duration 20 > /tmp/anom_r5_h1.txt 2>&1 &
-h2 python3 anomalia_client.py h2 --run 5 --label tcp-sem-mitigacao --proto tcp --phase 5:10:0 --phase 15:5:2 > /tmp/anom_r5_h2.txt 2>&1
+sh python3 anomalia_ctl.py prepare --mode off --thresh 5000
+h1 python3 anomalia_client.py h1 --run 5 --label tcp-sem-mitigacao --proto udp --phase 0:20:0.15 --probe --duration 20 > /tmp/anom_r5_h1.txt 2>&1 &
+h2 python3 anomalia_client.py h2 --run 5 --label tcp-sem-mitigacao --proto tcp --phase 5:10:0 --phase 15:5:0.15 > /tmp/anom_r5_h2.txt 2>&1
 h1 sleep 5
 sh python3 anomalia_ctl.py stats --run 5
 sh echo "--- RUN 6: TCP | anomalia | descarte total ---"
-sh python3 anomalia_ctl.py prepare --mode total
-h1 python3 anomalia_client.py h1 --run 6 --label tcp-descarte-total --proto udp --phase 0:20:2 --probe --duration 20 > /tmp/anom_r6_h1.txt 2>&1 &
-h2 python3 anomalia_client.py h2 --run 6 --label tcp-descarte-total --proto tcp --phase 5:10:0 --phase 15:5:2 > /tmp/anom_r6_h2.txt 2>&1
+sh python3 anomalia_ctl.py prepare --mode total --thresh 5000
+h1 python3 anomalia_client.py h1 --run 6 --label tcp-descarte-total --proto udp --phase 0:20:0.15 --probe --duration 20 > /tmp/anom_r6_h1.txt 2>&1 &
+h2 python3 anomalia_client.py h2 --run 6 --label tcp-descarte-total --proto tcp --phase 5:10:0 --phase 15:5:0.15 > /tmp/anom_r6_h2.txt 2>&1
 h1 sleep 5
 sh python3 anomalia_ctl.py stats --run 6
 sh echo "--- RUN 7: TCP | anomalia | descarte probabilístico ---"
-sh python3 anomalia_ctl.py prepare --mode prob
-h1 python3 anomalia_client.py h1 --run 7 --label tcp-descarte-prob --proto udp --phase 0:20:2 --probe --duration 20 > /tmp/anom_r7_h1.txt 2>&1 &
-h2 python3 anomalia_client.py h2 --run 7 --label tcp-descarte-prob --proto tcp --phase 5:10:0 --phase 15:5:2 > /tmp/anom_r7_h2.txt 2>&1
+sh python3 anomalia_ctl.py prepare --mode prob --thresh 5000
+h1 python3 anomalia_client.py h1 --run 7 --label tcp-descarte-prob --proto udp --phase 0:20:0.15 --probe --duration 20 > /tmp/anom_r7_h1.txt 2>&1 &
+h2 python3 anomalia_client.py h2 --run 7 --label tcp-descarte-prob --proto tcp --phase 5:10:0 --phase 15:5:0.15 > /tmp/anom_r7_h2.txt 2>&1
 h1 sleep 5
 sh python3 anomalia_ctl.py stats --run 7
 sh echo ""
 sh echo "### PASSO 5 - RELATÓRIO: tabelas, CSV e gráficos em anom_obs/ ###"
 sh python3 anomalia_ctl.py prepare --mode off
-sh python3 anomalia_report.py
+sh python3 anomalia_report.py --gargalo 1
 h3 pkill -f anomalia_server.py
 sh echo ""
 sh echo "### FIM. Resultados: anom_obs/resumo.csv e anom_obs/*.png ###"
+

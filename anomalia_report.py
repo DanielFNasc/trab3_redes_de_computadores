@@ -283,6 +283,8 @@ def summary_rows(runs):
             "deteccao_ms": sw.get("detect_ms"),
             "h2_descarte_switch_pct": sw.get("drop_pct"),
             "h2_estado_final": None if not sw else ("elefante" if sw["det_state"] else "normal"),
+            "janela_ini_s": round(r["ws"] - r["t_ref"], 2),
+            "janela_fim_s": round(r["we"] - r["t_ref"], 2),
         })
     return rows
 
@@ -331,13 +333,22 @@ def write_csvs(runs, rows, out_dir):
                     round(v or 0.0, 3) for v in (
                         sent_mbps(r, "h1", [s]), recv_mbps(r, "h1", [s]),
                         sent_mbps(r, "h2", [s]), recv_mbps(r, "h2", [s]))])
+        sent1 = r["sent"].get("h1")
+        if sent1 and sent1.get("probe"):
+            path = os.path.join(out_dir, "rtt_run%d.csv" % n)
+            shift = sent1["t0"] - r["t_ref"]
+            with open(path, "w", newline="") as fh:
+                w = csv.writer(fh)
+                w.writerow(["t_s", "rtt_ms"])      # rtt vazio = sonda perdida
+                for t, rtt in sent1["probe"]["samples"]:
+                    w.writerow([round(t + shift, 3), "" if rtt is None else rtt])
 
 
 # ----------------------------------------------------------------------
 # Gráficos (opcionais)
 # ----------------------------------------------------------------------
 
-def make_plots(runs, rows, out_dir):
+def make_plots(runs, rows, out_dir, gargalo=10.0):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -356,7 +367,7 @@ def make_plots(runs, rows, out_dir):
     fig, axes = plt.subplots(nrows, ncols, figsize=(12, 2.8 * nrows), sharey=True, squeeze=False)
     for ax in axes.flat:
         ax.set_visible(False)
-    gmax = 12.0
+    gmax = 1.2 * gargalo
     for ax, n in zip(axes.flat, ids):
         ax.set_visible(True)
         r = runs[n]
@@ -369,7 +380,7 @@ def make_plots(runs, rows, out_dir):
         # cada valor vale para o segundo [x, x+1): curva em degraus
         ax.step(xs, h1, where="post", color=c1, label="H1 (normal)")
         ax.step(xs, h2, where="post", color=c2, label="H2 (elefante)")
-        ax.axhline(10, color="gray", lw=0.8, ls=":")
+        ax.axhline(gargalo, color="gray", lw=0.8, ls=":")
         mode = (r["switch"] or {}).get("mode_name", "?")
         ax.set_title("run %d: %s (%s)" % (n, r["label"], mode), fontsize=9)
         ax.set_ylabel("Mbps em H3")
@@ -378,7 +389,8 @@ def make_plots(runs, rows, out_dir):
     for ax in axes[-1]:
         ax.set_xlabel("tempo (s)")
     axes.flat[0].legend(loc="upper right", fontsize=8)
-    fig.suptitle("Vazão recebida em H3 (sombreado = anomalia; ponteado = gargalo de 10 Mbps)", fontsize=10)
+    fig.suptitle("Vazão recebida em H3 (sombreado = anomalia; ponteado = gargalo de %g Mbps)" % gargalo,
+                 fontsize=10)
     fig.tight_layout()
     p = os.path.join(out_dir, "vazao_por_execucao.png")
     fig.savefig(p, dpi=130)
@@ -442,6 +454,8 @@ def main():
     ap = argparse.ArgumentParser(description="Relatório do Trabalho 3.")
     ap.add_argument("--obs-dir", default=DEFAULT_OBS_DIR)
     ap.add_argument("--no-plots", action="store_true", help="não gerar gráficos")
+    ap.add_argument("--gargalo", type=float, default=10.0,
+                    help="capacidade do enlace S1-H3 em Mbps, para os gráficos (padrão: %(default)g)")
     args = ap.parse_args()
 
     obs_dir = os.path.abspath(args.obs_dir)
@@ -458,7 +472,7 @@ def main():
     print_summary(rows)
     write_csvs(runs, rows, obs_dir)
     if not args.no_plots:
-        make_plots(runs, rows, obs_dir)
+        make_plots(runs, rows, obs_dir, args.gargalo)
 
 
 if __name__ == "__main__":
