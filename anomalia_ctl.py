@@ -11,7 +11,9 @@ switch está):
     mininet> sh python3 anomalia_ctl.py show
 
 Subcomandos:
-    mode {off,total,prob}   troca a estratégia (off = só detecta, sem descartar)
+    mode {off,total,prob,limit}
+                            troca a estratégia (off = só detecta, sem descartar;
+                            limit = limitador por janela)
     thresh BYTES            limiar em bytes por janela de 100 ms (0 = padrão do P4)
     reset                   zera detector, contadores e o estado do NAT
     prepare --mode M        reset + mode (+ --thresh) : começo de cada execução
@@ -31,7 +33,7 @@ import sys
 import time
 
 PREFIX = "MyIngress."
-MODES = {"off": 0, "total": 1, "prob": 2}
+MODES = {"off": 0, "total": 1, "prob": 2, "limit": 3}
 MODE_NAME = {v: k for k, v in MODES.items()}
 
 DEFAULT_OBS_DIR = os.path.join(

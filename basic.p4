@@ -12,8 +12,9 @@
  *
  *   PASSO 1  Definição da anomalia (constantes DET_* abaixo)
  *   PASSO 2  Detector no data plane (registradores + janela de tempo)
- *   PASSO 3  Tratamento: descarte total OU descarte probabilístico,
- *            escolhido em tempo de execução (registrador cfg_mode)
+ *   PASSO 3  Tratamento: descarte total, descarte probabilístico OU
+ *            limitador por janela, escolhido em tempo de execução
+ *            (registrador cfg_mode)
  *
  * O detector roda ANTES do NAT, no sentido de saída (10.0.0.0/24 ->
  * fora). Nesse ponto o IP de origem ainda é o privado, então cada host
@@ -57,6 +58,7 @@ const bit<32> DET_THRESH_DEFAULT = 50000;    // bytes por janela
 const bit<8> MODE_OFF   = 0;   // sem mitigação: classifica, mas encaminha tudo
 const bit<8> MODE_TOTAL = 1;   // estratégia A: descarte total
 const bit<8> MODE_PROB  = 2;   // estratégia B: descarte probabilístico
+const bit<8> MODE_LIMIT = 3;   // estratégia C: limitador por janela (policer)
 
 // Estratégia B: probabilidade de descarte = P/256, conforme a intensidade
 //   nível 1: taxa entre 1x e 2x o limiar  -> 25%
@@ -273,7 +275,8 @@ control MyIngress(
      * e colisões: a topologia só tem dois hosts internos.
      *
      * Configuração (escrita pelo plano de controle com simple_switch_CLI):
-     *   cfg_mode[0]   : 0 = sem mitigação, 1 = descarte total, 2 = probabilístico
+     *   cfg_mode[0]   : 0 = sem mitigação, 1 = descarte total, 2 = probabilístico,
+     *                   3 = limitador por janela
      *   cfg_thresh[0] : limiar em bytes por janela (0 = usa DET_THRESH_DEFAULT)
      */
     register<bit<8>>(1)  cfg_mode;
@@ -485,6 +488,8 @@ control MyIngress(
                  *   mode 1: ESTRATÉGIA A   descarte total
                  *   mode 2: ESTRATÉGIA B   descarte probabilístico (p cresce
                  *                          com a intensidade da anomalia)
+                 *   mode 3: ESTRATÉGIA C   limitador por janela (admite até o
+                 *                          limiar por janela, descarta o excedente)
                  ************************************************************/
                 if (st == 1) {
                     if (mode == MODE_TOTAL) {
@@ -495,6 +500,11 @@ control MyIngress(
                         else if (lvl == 2) { p8 = P_LVL2; }
                         else               { p8 = P_LVL1; }
                         if (rnd < p8) { drop_it = true; }
+                    } else if (mode == MODE_LIMIT) {
+                        // Limitador por janela (policer): o host elefante pode enviar
+                        // até 'thr' bytes por janela; o que passar disso é descartado.
+                        // wbytes já inclui este pacote e conta o tráfego oferecido.
+                        if (wbytes > thr) { drop_it = true; }
                     }
                 }
 
