@@ -7,7 +7,7 @@ Base: o NAT do Trabalho 2, inalterado, com o detector e o tratamento inseridos *
 
 | Arquivo | Onde vai | Papel |
 |---|---|---|
-| `basic.p4` | raiz do exercício | NAT do T2 + detector + duas estratégias (Passos 1–3) |
+| `basic.p4` | raiz do exercício | NAT do T2 + detector + três estratégias (Passos 1–3) |
 | `topology.json` | `pod-topo/` (substitui o do T2) | igual ao T2, com o enlace S1–H3 limitado a 10 Mbps |
 | `s1-runtime.json` | `pod-topo/` | **sem alteração** (o detector não usa tabelas) |
 | `anomalia_server.py` | raiz | servidor em H3: conta o que chega, ecoa sondas de RTT |
@@ -79,12 +79,28 @@ O modo é escolhido em tempo de execução (`cfg_mode`), sem recompilar, o que g
 | `off` | `anomalia_ctl.py prepare --mode off` | **Sem mitigação** (linha de base): detecta e registra, mas encaminha tudo |
 | `total` | `... --mode total` | **Estratégia A, descarte total**: todo pacote de host elefante é descartado |
 | `prob` | `... --mode prob` | **Estratégia B, descarte probabilístico**: usa `random()` e descarta 25% (nível 1), 50% (nível 2) ou 75% (nível 3) |
+| `limit` | `... --mode limit` | **Estratégia C, limitador por janela (policer)**: o host elefante pode enviar até o limiar por janela de 100 ms; o excedente é descartado. Determinístico: limita H2 ao limiar (`wbytes > thr` → descarta) |
+
+As estratégias B e C deixam H2 passar com taxa próxima ao limiar, mas de formas diferentes: a B descarta ao acaso, em proporção à intensidade; a C aceita os primeiros pacotes de cada janela e descarta o resto, de forma regular. A vazão média de H2 deve ser parecida; a diferença está na regularidade (jitter) e no comportamento em rajadas.
 
 A probabilidade da B acompanha a intensidade: para um host a taxa `R` acima do limiar `T`, o descarte ideal para trazê-lo de volta a `T` é `1 − T/R`. Os três níveis aproximam essa curva usando só comparações e deslocamentos (o P4 não tem divisão).
 
 ## Passo 4 — Experimentos e avaliação (3,0)
 
-**Topologia:** a do T2 (H1 e H2 → S1 NAT → H3). Gargalo: enlace S1–H3 a 10 Mbps, 1 ms.
+> **Escala usada nos experimentos (`testes_t3_escala.mn`).** A VM do tutorial roda o BMv2 com log e captura de pacotes ligados e satura em ~3 Mbps (~250 pacotes/s), então o gargalo de 10 Mbps não era alcançável. Todo o projeto foi reduzido proporcionalmente, sem recompilar o P4:
+>
+> | Parâmetro | 10 Mbps (`testes_t3.mn`) | Reduzido (`testes_t3_escala.mn`) |
+> |---|---|---|
+> | Gargalo S1–H3 | 10 Mbps | 1 Mbps (`topology.json`) |
+> | Limiar (40% do gargalo) | 50.000 B / 100 ms | 5.000 B / 100 ms (`prepare --thresh 5000`) |
+> | H1 normal | 2 Mbps | 0,15 Mbps |
+> | H2 elefante | 15 Mbps | 1,6 Mbps (4,1× o limiar → nível 3) |
+> | Fila do enlace | 1000 pacotes | 30 pacotes (`tc qdisc change`, feito pelo roteiro) |
+> | Gráficos | `anomalia_report.py` | `anomalia_report.py --gargalo 1` |
+>
+> A justificativa da anomalia (Passo 1) não muda: continua sendo 40% da capacidade do gargalo. Em ~190 pacotes/s no switch, a detecção prevista é de ~24 ms e H1 fica com ~2× de folga abaixo do limiar.
+
+**Topologia:** a do T2 (H1 e H2 → S1 NAT → H3). Gargalo: enlace S1–H3 de 10 Mbps no roteiro original e de 1 Mbps no reduzido, com 1 ms de atraso.
 **Tráfego:** H1 é normal (UDP, 2 Mbps, 20 s). H2 sobe a 15 Mbps de 5 s a 15 s e volta a 2 Mbps de 15 s a 20 s. Todas as execuções usam o mesmo tempo, taxa e topologia; só muda o modo do switch.
 
 | Run | Protocolo do H2 | Modo | Objetivo |
@@ -94,6 +110,8 @@ A probabilidade da B acompanha a intensidade: para um host a taxa `R` acima do l
 | 3 | UDP, 15 Mbps | total | Estratégia A |
 | 4 | UDP, 15 Mbps | prob | Estratégia B |
 | 5–7 | TCP, máximo possível | off / total / prob | Mesmo experimento com elefante TCP (H1 segue UDP) |
+| 8 | UDP, mesma carga das runs 2–4 | limit | Estratégia C (limitador por janela) |
+| 9 | TCP, máximo possível | limit | Estratégia C com elefante TCP |
 
 **Métricas** (em `anomalia_report.py`, nas janelas antes / durante / depois da anomalia):
 - **Throughput** recebido em H3 por host (Mbps).
@@ -101,7 +119,14 @@ A probabilidade da B acompanha a intensidade: para um host a taxa `R` acima do l
 - **RTT de H1**: média, p95, máximo e sondas perdidas (10 sondas/s por UDP, pois o NAT descarta ICMP e `ping` não funciona).
 - **Tempo de detecção** de H2: `det_first_alarm − det_first_seen`, medido no switch.
 
-Saídas: tabela no terminal, `anom_obs/resumo.csv`, `serie_run<N>.csv` e, com matplotlib, `vazao_por_execucao.png`, `rtt_h1.png`, `comparacao.png`.
+Saídas: tabela no terminal e, em `anom_obs/`, `resumo.csv`, `serie_run<N>.csv` e `rtt_run<N>.csv`. Se a máquina tiver matplotlib, o `anomalia_report.py` também gera os gráficos.
+
+**Gráficos em outra máquina (sem matplotlib na VM do P4):** rode o relatório na VM, copie a pasta `anom_obs/` (só os CSVs bastam) e, na máquina com matplotlib:
+```
+python3 anomalia_graficos.py --dir anom_obs            # PNG na própria pasta
+python3 anomalia_graficos.py --dir anom_obs --out figuras --formato pdf
+```
+Gera `vazao_por_execucao`, `rtt_h1` e `comparacao`, lendo apenas os CSVs.
 
 ### Comportamento esperado (previsão, não medição)
 
@@ -112,6 +137,9 @@ Uma simulação em Python da **lógica do detector** (sem fila, sem NAT, sem BMv
 | off | 26,5 ms | ~15 Mbps (sobrecarrega o gargalo) | 0% |
 | total | 26,5 ms | ~0 Mbps | ~94% |
 | prob | 26,5 ms | ~3,8 Mbps (≈ limiar) | ~70% |
+| limit | 26,5 ms | ~4 Mbps (= limiar, de forma regular) | ~73% |
+
+(Na escala reduzida, a simulação previu 95,4% / 70,3% / 73,0% de descarte de H2 para total / prob / limit; as duas primeiras ficaram em 95,2% e 70,0% nas medições reais.)
 
 Nos três casos H1 nunca é marcado, H2 volta ao normal logo após reduzir a taxa (≈15,1 s), e no cenário normal não há alarme. As medições no Mininet é que valem para o relatório; esta tabela serve de referência para conferir se o switch se comporta como projetado.
 
@@ -123,7 +151,7 @@ Roteiro de demonstração (cada trecho do `testes_t3.mn` tem um banner `### PASS
 1. Passo 0: servidor em H3 e teste de fumaça.
 2. Passo 1: cenário normal (sem alarme).
 3. Passo 2: anomalia sem mitigação (H1 degradado).
-4. Passo 3A e 3B: as duas estratégias, na mesma carga.
+4. Passo 3A, 3B e 3C: as três estratégias, na mesma carga.
 5. Passo 4: repetição com TCP.
 6. Passo 5: relatório com tabelas e gráficos.
 
